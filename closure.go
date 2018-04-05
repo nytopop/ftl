@@ -66,6 +66,7 @@ func (f Closure) Par(g Closure) Closure {
 func ParC(gs ...Closure) Closure {
 	return NothingC().apply((Closure).Par, gs...)
 }
+
 func (f Closure) Mu(mu sync.Locker) Closure {
 	return func() error {
 		mu.Lock()
