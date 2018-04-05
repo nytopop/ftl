@@ -1,4 +1,4 @@
-# ftl : *f*unction *t*ransformers *l*ibrary
+# ftl : function transformer library
 
 Functional sequencing combinators written in Go. A continuation of my explorations in functional Go [here](https://github.com/nytopop/errsel), specialized to a small set of requirements commonly found in real code.
 
