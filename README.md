@@ -6,8 +6,8 @@ Inspired by [Control.Monad](https://hackage.haskell.org/package/base-4.11.0.0/do
 
 This library essentially provides a DSL for gluing together and modifying the runtime behavior of the typed functions:
 
-    ```Go
-    type Closure func() error
-    type Tasklet func(context.Context) error
-    type Predicate func(error) bool
-    ```
+```Go
+type Closure func() error
+type Tasklet func(context.Context) error
+type Predicate func(error) bool
+```
