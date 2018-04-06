@@ -7,6 +7,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// Tasklet represents a stateless interruptible function.
 type Tasklet func(context.Context) error
 
 func NothingT() Tasklet {
@@ -35,13 +36,14 @@ func (f Tasklet) Until(p Predicate) Tasklet {
 	return f.until(p, true)
 }
 
-func (f Tasklet) apply(bind func(Tasklet, Tasklet) Tasklet,
+func (f Tasklet) bindWith(bind func(Tasklet, Tasklet) Tasklet,
 	gs ...Tasklet,
 ) Tasklet {
+	x := f
 	for _, g := range gs {
-		f = bind(f, g)
+		x = bind(x, g)
 	}
-	return f
+	return x
 }
 
 func (f Tasklet) Seq(g Tasklet) Tasklet {
@@ -60,10 +62,10 @@ func (f Tasklet) Seq(g Tasklet) Tasklet {
 }
 
 func SeqT(gs ...Tasklet) Tasklet {
-	return NothingT().apply((Tasklet).Seq, gs...)
+	return NothingT().bindWith((Tasklet).Seq, gs...)
 }
 
-func (f Tasklet) lift(ctx context.Context) Closure {
+func (f Tasklet) Ap(ctx context.Context) Closure {
 	return func() error {
 		return f(ctx)
 	}
@@ -72,14 +74,14 @@ func (f Tasklet) lift(ctx context.Context) Closure {
 func (f Tasklet) Par(g Tasklet) Tasklet {
 	return func(ctx context.Context) error {
 		eg, taskCtx := errgroup.WithContext(ctx)
-		eg.Go(f.lift(taskCtx))
-		eg.Go(g.lift(taskCtx))
+		eg.Go(f.Ap(taskCtx))
+		eg.Go(g.Ap(taskCtx))
 		return eg.Wait()
 	}
 }
 
 func ParT(gs ...Tasklet) Tasklet {
-	return NothingT().apply((Tasklet).Par, gs...)
+	return NothingT().bindWith((Tasklet).Par, gs...)
 }
 
 func (f Tasklet) Mu(mu sync.Locker) Tasklet {
@@ -89,4 +91,26 @@ func (f Tasklet) Mu(mu sync.Locker) Tasklet {
 		mu.Unlock()
 		return err
 	}
+}
+
+func (f Tasklet) Wg(wg *sync.WaitGroup) Tasklet {
+	wg.Add(1)
+	return func(ctx context.Context) error {
+		defer wg.Done()
+		return f(ctx)
+	}
+}
+
+func (f Tasklet) SeqN(n int, g Tasklet) Tasklet {
+	for i := 1; i < n; i++ {
+		f = f.Seq(g)
+	}
+	return f
+}
+
+func (f Tasklet) ParN(n int, g Tasklet) Tasklet {
+	for i := 1; i < n; i++ {
+		f = f.Par(g)
+	}
+	return f
 }

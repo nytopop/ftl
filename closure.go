@@ -6,6 +6,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// Closure represents a generic function.
 type Closure func() error
 
 func NothingC() Closure {
@@ -32,7 +33,7 @@ func (f Closure) Until(p Predicate) Closure {
 	return f.until(p, true)
 }
 
-func (f Closure) apply(bind func(Closure, Closure) Closure,
+func (f Closure) bindWith(bind func(Closure, Closure) Closure,
 	gs ...Closure,
 ) Closure {
 	for _, g := range gs {
@@ -51,7 +52,7 @@ func (f Closure) Seq(g Closure) Closure {
 }
 
 func SeqC(gs ...Closure) Closure {
-	return NothingC().apply((Closure).Seq, gs...)
+	return NothingC().bindWith((Closure).Seq, gs...)
 }
 
 func (f Closure) Par(g Closure) Closure {
@@ -64,7 +65,7 @@ func (f Closure) Par(g Closure) Closure {
 }
 
 func ParC(gs ...Closure) Closure {
-	return NothingC().apply((Closure).Par, gs...)
+	return NothingC().bindWith((Closure).Par, gs...)
 }
 
 func (f Closure) Mu(mu sync.Locker) Closure {
@@ -74,4 +75,26 @@ func (f Closure) Mu(mu sync.Locker) Closure {
 		mu.Unlock()
 		return err
 	}
+}
+
+func (f Closure) Wg(wg *sync.WaitGroup) Closure {
+	wg.Add(1)
+	return func() error {
+		defer wg.Done()
+		return f()
+	}
+}
+
+func (f Closure) SeqN(n int, g Closure) Closure {
+	for i := 1; i < n; i++ {
+		f = f.Seq(g)
+	}
+	return f
+}
+
+func (f Closure) ParN(n int, g Closure) Closure {
+	for i := 1; i < n; i++ {
+		f = f.Par(g)
+	}
+	return f
 }

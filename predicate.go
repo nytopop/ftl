@@ -8,7 +8,7 @@ import (
 
 type Predicate func(error) bool
 
-func (p Predicate) apply(bind func(Predicate, Predicate) Predicate,
+func (p Predicate) bindWith(bind func(Predicate, Predicate) Predicate,
 	gs ...Predicate,
 ) Predicate {
 	for _, g := range gs {
@@ -34,7 +34,7 @@ func (f Predicate) And(g Predicate) Predicate {
 }
 
 func And(gs ...Predicate) Predicate {
-	return True().apply((Predicate).And, gs...)
+	return True().bindWith((Predicate).And, gs...)
 }
 
 func (f Predicate) Or(g Predicate) Predicate {
@@ -46,7 +46,7 @@ func (f Predicate) Or(g Predicate) Predicate {
 }
 
 func Or(gs ...Predicate) Predicate {
-	return False().apply((Predicate).Or, gs...)
+	return False().bindWith((Predicate).Or, gs...)
 }
 
 func (p Predicate) Not() Predicate {
