@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -32,58 +33,6 @@ import (
 //     executing backgrounded goroutines after returning.
 type Routine func(ctx context.Context, state StateLoader) error
 
-// NothingR is the empty Routine. It simply waits until it is
-// interrupted, and then returns the cancellation error.
-func NothingR() Routine {
-	return func(ctx context.Context, _ StateLoader) error {
-		<-ctx.Done()
-		return ctx.Err()
-	}
-}
-
-// Ap applies the state argument.
-func (f Routine) Ap(state StateLoader) Tasklet {
-	return func(ctx context.Context) error {
-		return f(ctx, state)
-	}
-}
-
-// Bind together two routines. The constructed routine will
-// execute both routines in parallel with the same state loader.
-func (f Routine) Bind(g Routine) Routine {
-	return func(ctx context.Context, state StateLoader) error {
-		ff := f.Ap(state).Ap(ctx)
-		gg := g.Ap(state).Ap(ctx)
-		return ff.Par(gg)()
-
-		// hard interrupts both if one fails due to the
-		// errgroup cancellation. not ideal because we
-		// want to maintain control over cancellation -
-		// sending a hard interrupt while state is loaded
-		// is bad news
-		//
-		// leaving for reference
-		//
-		// ff := f.Ap(state)
-		// gg := g.Ap(state)
-		// return ff.Par(gg)(ctx)
-	}
-}
-
-// BindR binds together the provided routines and returns a
-// constructed routine that will execute all of them in parallel.
-func BindR(gs ...Routine) Routine {
-	f := NothingR()
-	for _, g := range gs {
-		f = f.Bind(g)
-	}
-	return f
-}
-
-func (f Routine) RunBG() error {
-	return f.Run(context.Background())
-}
-
 // Run the routine. There are three ways in which this call may terminate:
 //
 // 1. If the passed in context is cancelled. The passsed in state
@@ -91,7 +40,7 @@ func (f Routine) RunBG() error {
 //    will be interrupted once all state has been fully unloaded.
 //
 // 2. If an os signal in Stdsigs is received. The state loader will
-//    stop accepting new state loads, the routine will wait for the
+//    stop accepting new state loads and the routine will wait the
 //    configured amount of time for the specific signal (or wait until
 //    done if < 0) while unloading, and then be interrupted if and
 //    only if all state was unloaded. If it wasn't, the state loader
@@ -142,7 +91,7 @@ func (f Routine) RunSigs(
 	defer sigCancel() // release resources
 
 	// spawn f in background, using the cancellable context
-	eg.Go(f.Ap(state).Ap(fctx))
+	eg.Go(f.Ap2(state).Ap(fctx))
 
 	for {
 	outer:
@@ -171,6 +120,7 @@ func (f Routine) RunSigs(
 
 			// wait for loaded state to be unloaded
 			if err := state.UnloadWait(bg); err != nil {
+				// if this fails theres a bug in UnloadWait
 				panic(err)
 			}
 
@@ -184,5 +134,87 @@ func (f Routine) RunSigs(
 			fcancel()            // release resources
 			return eg.Wait()     // return its error
 		}
+	}
+}
+
+func (f Routine) Binds(bind func(Routine, Routine) Routine,
+	gs ...Routine,
+) Routine {
+	for _, g := range gs {
+		f = bind(f, g)
+	}
+	return f
+}
+
+func (f Routine) Seq(gs ...Routine) Routine {
+	return Routine.Binds(f, func(x, y Routine) Routine {
+		return func(ctx context.Context, state StateLoader) error {
+			a := x.Ap2(state)
+			b := y.Ap2(state)
+			return Tasklet.Seq(a, b)(ctx)
+		}
+	}, gs...)
+}
+
+func (f Routine) Par(gs ...Routine) Routine {
+	return Routine.Binds(f, func(x, y Routine) Routine {
+		return func(ctx context.Context, state StateLoader) error {
+			a := x.Ap2(state).Ap(ctx)
+			b := y.Ap2(state).Ap(ctx)
+			return Closure.Par(a, b)()
+		}
+	}, gs...)
+}
+
+func (f Routine) Ap(ctx context.Context, state StateLoader) Closure {
+	return func() error {
+		return f(ctx, state)
+	}
+}
+
+func (f Routine) Ap1(ctx context.Context) Statelet {
+	return func(state StateLoader) error {
+		return f(ctx, state)
+	}
+}
+
+func (f Routine) Ap2(state StateLoader) Tasklet {
+	return func(ctx context.Context) error {
+		return f(ctx, state)
+	}
+}
+
+func (f Routine) cond(p Predicate, exit bool) Routine {
+	return func(ctx context.Context, state StateLoader) error {
+		for {
+			if err := f(ctx, state); p(err) == exit {
+				return err
+			}
+		}
+	}
+}
+
+func (f Routine) While(p Predicate) Routine {
+	return Routine.cond(f, p, false)
+}
+
+func (f Routine) Until(p Predicate) Routine {
+	return Routine.cond(f, p, true)
+}
+
+func (f Routine) Mu(mu sync.Locker) Routine {
+	return func(ctx context.Context, state StateLoader) error {
+		mu.Lock()
+		err := f(ctx, state)
+		mu.Unlock()
+		return err
+	}
+}
+
+func (f Routine) Wg(wg *sync.WaitGroup) Routine {
+	wg.Add(1)
+	return func(ctx context.Context, state StateLoader) error {
+		defer wg.Done()
+		return f(ctx, state)
 	}
 }

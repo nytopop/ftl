@@ -5,13 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	_ "net/http/pprof"
 	"time"
 
 	"github.com/nytopop/ftl"
 )
 
-func infiniteLoader(ctx context.Context, state ftl.StateLoader) error {
+var service ftl.Routine = func(
+	ctx context.Context,
+	state ftl.StateLoader,
+) error {
 	// load state as fast as possible
 	for {
 		select {
@@ -42,7 +44,11 @@ func infiniteLoader(ctx context.Context, state ftl.StateLoader) error {
 					// the stack is unfolded during unloading,
 					// as its an in place mutation.
 					if rand.Intn(15) == 1 {
-						_ = state.LoadUnload(ftl.NothingT())
+						_ = state.LoadUnload(
+							func(cctx context.Context) error {
+								return cctx.Err()
+							},
+						)
 					}
 				}()
 			} else {
@@ -53,18 +59,6 @@ func infiniteLoader(ctx context.Context, state ftl.StateLoader) error {
 	}
 
 	return errors.New("unexpectored")
-}
-
-func hmm(ctx context.Context, state ftl.StateLoader) error {
-	return errors.New("one of these exited, did the rest unload safely?")
-}
-
-func mk(n int) []ftl.Routine {
-	fs := make([]ftl.Routine, n)
-	for i := 0; i < n; i++ {
-		fs[i] = infiniteLoader
-	}
-	return fs
 }
 
 func norm(x int64) time.Duration {
@@ -90,7 +84,7 @@ func main() {
 	)
 	defer cancel()
 
-	// NOICE - run 7 stateful services, with varying load
+	// NOICE - run 9 stateful services, with varying load
 	// durations and very large numbers of loads. if this
 	// works correctly, everything is perfectly synchronized,
 	// concurrently (!)
@@ -98,11 +92,16 @@ func main() {
 	// :) stabilizes at around 630,000 concurrent state loads
 	// on my machine (while debug is enabled - if it's off then
 	// it goes into redonkulous amounts of memory in goroutines)
-	err := ftl.BindR(
-		//mk(7)...,
-		infiniteLoader,
-		hmm,
-		infiniteLoader,
+	err := ftl.Routine.Par(
+		service,
+		service,
+		service,
+		service,
+		service,
+		service,
+		service,
+		service,
+		service,
 	).Run(ctx)
 
 	fmt.Println("exited with:", err)

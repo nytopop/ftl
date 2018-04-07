@@ -14,38 +14,22 @@ func prln(args ...interface{}) ftl.Closure {
 }
 
 func main() {
-	// seqA == seqB
-	seqA := prln("i").
-		Seq(prln("am")).
-		Seq(prln("explicitly")).
-		Seq(prln("ordered"))
-
-	seqB := ftl.SeqC(
+	seq := ftl.Closure.Seq(
 		prln("i"),
 		prln("am"),
 		prln("explicitly"),
 		prln("ordered"),
 	)
+	prln().Seq(seq)()
 
-	prln().Seq(seqA)()
-	prln().Seq(seqB)()
-
-	// parA == parB
-	parA := ftl.NothingC().
-		Par(prln(1)).
-		Par(prln(2)).
-		Par(prln(3)).
-		Par(prln(4))
-
-	parB := ftl.ParC(
+	par := ftl.Closure.Par(
 		prln(1),
 		prln(2),
 		prln(3),
 		prln(4),
 	)
 
-	prln().Seq(parA)()
-	prln().Seq(parB)()
+	prln().Seq(par)()
 
 	// retryA prints hello world 9 times
 	retryA := prln("hello world!").
@@ -53,34 +37,19 @@ func main() {
 
 	prln().Seq(retryA)()
 
-	// all intermediate errors are checked, and execution
-	// short circuits if an error is returned :)
-
-	// condA == condB
-	condA := ftl.TriesEq(2).
-		Or(ftl.NotNil())
-
-	condB := ftl.Or(
+	cond := ftl.Predicate.Or(
 		ftl.TriesEq(2),
 		ftl.NotNil(),
 	)
 
-	// retryB == retryC
-	retryB := prln().
-		Seq(seqB).
-		Seq(parB).
-		Until(condA)
-
-	retryB()
-
 	// note that the sequence will short circuit if an
 	// error is encountered, and the _entire_ sequence
 	// will be retried from the start
-	retryC := ftl.SeqC(
+	retryB := ftl.Closure.Seq(
 		prln(),
-		seqB,
-		parB,
-	).Until(condB)
+		seq,
+		par,
+	).Until(cond)
 
-	retryC()
+	retryB()
 }

@@ -19,7 +19,7 @@ type StateHolder interface {
 
 // StateLoader can load state.
 type StateLoader interface {
-	// Load an unloadable unit of state.
+	// Load a unit of state.
 	//
 	// Intended for state units that will be unloaded
 	// by the caller.
@@ -121,18 +121,30 @@ func (s *State) LoadUnload(unload Tasklet) (loaded bool) {
 			fmt.Println("++fn", s.states)
 		}
 
-		loaded = true
-		if s.unloads == nil {
-			s.unloads = NothingT()
-		}
-		s.unloads = ParT(
-			s.unloads, // run previous unloads
-			unload,    // run provided unload
+		unload = Tasklet.Seq(
+			// first call the provided unload
+			unload,
+
+			// then unload our reference
 			func(_ context.Context) error {
-				s.unloadSingle() // unload this state unit
+				s.unloadSingle()
 				return nil
 			},
 		)
+
+		switch s.unloads {
+		case nil:
+			// if there are no unloads loaded, just do unload
+			s.unloads = unload
+		default:
+			// if there are, parallelize
+			s.unloads = Tasklet.Par(
+				s.unloads,
+				unload,
+			)
+		}
+
+		loaded = true
 	}
 
 	s.mu.Unlock()
@@ -162,7 +174,7 @@ func (s *State) Unload(ctx context.Context) error {
 }
 
 func (s *State) UnloadWait(ctx context.Context) error {
-	return ParT(s.Unload, s.Wait)(ctx)
+	return Tasklet.Par(s.Unload, s.Wait)(ctx)
 }
 
 // Wait until all remote state has been unloaded. It
@@ -199,7 +211,7 @@ func (s *State) Wait(ctx context.Context) error {
 
 	//      |- tasklet gives us automatic context checking
 	//      v
-	var f Tasklet = SeqT(
+	var f = Tasklet.Seq(
 		succeedIfLoaded.Mu(&s.mu), // check if loaded
 		delayer,                   // don't burn cpu
 	).While(Nil()) // repeat until something happens

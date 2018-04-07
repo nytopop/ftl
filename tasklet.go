@@ -10,33 +10,11 @@ import (
 // Tasklet represents a stateless interruptible function.
 type Tasklet func(context.Context) error
 
-func NothingT() Tasklet {
-	return func(ctx context.Context) error {
-		return ctx.Err()
-	}
+func (f Tasklet) Run() error {
+	return f(context.Background())
 }
 
-func (f Tasklet) until(p Predicate, exit bool) Tasklet {
-	return func(ctx context.Context) error {
-		for {
-			err := f(ctx)
-			if p(err) == exit {
-				return err
-			}
-		}
-		panic("inconceivable!")
-	}
-}
-
-func (f Tasklet) While(p Predicate) Tasklet {
-	return f.until(p, false)
-}
-
-func (f Tasklet) Until(p Predicate) Tasklet {
-	return f.until(p, true)
-}
-
-func (f Tasklet) bindWith(bind func(Tasklet, Tasklet) Tasklet,
+func (f Tasklet) Binds(bind func(Tasklet, Tasklet) Tasklet,
 	gs ...Tasklet,
 ) Tasklet {
 	x := f
@@ -46,23 +24,32 @@ func (f Tasklet) bindWith(bind func(Tasklet, Tasklet) Tasklet,
 	return x
 }
 
-func (f Tasklet) Seq(g Tasklet) Tasklet {
-	return func(ctx context.Context) error {
-		if err := ctx.Err(); err != nil {
-			return err
+func (f Tasklet) Seq(gs ...Tasklet) Tasklet {
+	return Tasklet.Binds(f, func(x, y Tasklet) Tasklet {
+		return func(ctx context.Context) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if err := x(ctx); err != nil {
+				return err
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return y(ctx)
 		}
-		if err := f(ctx); err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return g(ctx)
-	}
+	}, gs...)
 }
 
-func SeqT(gs ...Tasklet) Tasklet {
-	return NothingT().bindWith((Tasklet).Seq, gs...)
+func (f Tasklet) Par(gs ...Tasklet) Tasklet {
+	return Tasklet.Binds(f, func(x, y Tasklet) Tasklet {
+		return func(ctx context.Context) error {
+			eg, taskCtx := errgroup.WithContext(ctx)
+			eg.Go(x.Ap(taskCtx))
+			eg.Go(y.Ap(taskCtx))
+			return eg.Wait()
+		}
+	}, gs...)
 }
 
 func (f Tasklet) Ap(ctx context.Context) Closure {
@@ -71,17 +58,22 @@ func (f Tasklet) Ap(ctx context.Context) Closure {
 	}
 }
 
-func (f Tasklet) Par(g Tasklet) Tasklet {
+func (f Tasklet) cond(p Predicate, exit bool) Tasklet {
 	return func(ctx context.Context) error {
-		eg, taskCtx := errgroup.WithContext(ctx)
-		eg.Go(f.Ap(taskCtx))
-		eg.Go(g.Ap(taskCtx))
-		return eg.Wait()
+		for {
+			if err := f(ctx); p(err) == exit {
+				return err
+			}
+		}
 	}
 }
 
-func ParT(gs ...Tasklet) Tasklet {
-	return NothingT().bindWith((Tasklet).Par, gs...)
+func (f Tasklet) While(p Predicate) Tasklet {
+	return Tasklet.cond(f, p, false)
+}
+
+func (f Tasklet) Until(p Predicate) Tasklet {
+	return Tasklet.cond(f, p, true)
 }
 
 func (f Tasklet) Mu(mu sync.Locker) Tasklet {
@@ -99,18 +91,4 @@ func (f Tasklet) Wg(wg *sync.WaitGroup) Tasklet {
 		defer wg.Done()
 		return f(ctx)
 	}
-}
-
-func (f Tasklet) SeqN(n int, g Tasklet) Tasklet {
-	for i := 1; i < n; i++ {
-		f = f.Seq(g)
-	}
-	return f
-}
-
-func (f Tasklet) ParN(n int, g Tasklet) Tasklet {
-	for i := 1; i < n; i++ {
-		f = f.Par(g)
-	}
-	return f
 }
