@@ -6,8 +6,16 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Closure represents a generic function.
+// Closure is a function that might fail.
 type Closure func() error
+
+func Fail(err error) Closure {
+	return func() error { return err }
+}
+
+func (f Closure) err(err error) Closure {
+	return func() error { return err }
+}
 
 func (f Closure) Run() error {
 	return f()
@@ -23,25 +31,29 @@ func (f Closure) Binds(bind func(Closure, Closure) Closure,
 }
 
 func (f Closure) Seq(gs ...Closure) Closure {
-	return Closure.Binds(f, func(x, y Closure) Closure {
-		return func() error {
-			if err := x(); err != nil {
-				return err
-			}
-			return y()
+	return func() error {
+		var err error
+		if err = f(); err != nil {
+			return err
 		}
-	}, gs...)
+		for i := range gs {
+			if err = gs[i](); err != nil {
+				break
+			}
+		}
+		return err
+	}
 }
 
 func (f Closure) Par(gs ...Closure) Closure {
-	return Closure.Binds(f, func(x, y Closure) Closure {
-		return func() error {
-			var eg errgroup.Group
-			eg.Go(x)
-			eg.Go(y)
-			return eg.Wait()
+	return func() error {
+		var eg errgroup.Group
+		eg.Go(f)
+		for i := range gs {
+			eg.Go(gs[i])
 		}
-	}, gs...)
+		return eg.Wait()
+	}
 }
 
 func (f Closure) cond(p Predicate, exit bool) Closure {
@@ -62,6 +74,16 @@ func (f Closure) Until(p Predicate) Closure {
 	return Closure.cond(f, p, true)
 }
 
+func (f Closure) Ite(p Predicate, g, z Closure) Closure {
+	return func() error {
+		if err := f(); p(err) {
+			return g()
+		} else {
+			return z()
+		}
+	}
+}
+
 func (f Closure) Mu(mu sync.Locker) Closure {
 	return func() error {
 		mu.Lock()
@@ -71,10 +93,12 @@ func (f Closure) Mu(mu sync.Locker) Closure {
 	}
 }
 
-func (f Closure) Wg(wg *sync.WaitGroup) Closure {
-	wg.Add(1)
+func (f Closure) Once() Closure {
+	var once sync.Once
 	return func() error {
-		defer wg.Done()
-		return f()
+		var err error
+		g := func() { err = f() }
+		once.Do(g)
+		return err
 	}
 }

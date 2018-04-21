@@ -2,6 +2,7 @@ package ftl
 
 import (
 	"context"
+	"time"
 
 	"github.com/pkg/errors"
 )
@@ -118,5 +119,27 @@ func Done(ctx context.Context) Predicate {
 func NotDone(ctx context.Context) Predicate {
 	return func(_ error) bool {
 		return ctx.Err() == nil
+	}
+}
+
+func Backoff(start, ceil time.Duration) Predicate {
+	var (
+		i     int
+		sleep = start
+	)
+	return func(_ error) bool {
+		i++
+		if i == 1 {
+			return true
+		}
+
+		time.Sleep(sleep)
+
+		sleep = sleep * 2
+		if sleep > ceil {
+			sleep = ceil
+		}
+
+		return true
 	}
 }

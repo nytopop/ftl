@@ -7,7 +7,11 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Tasklet represents a stateless interruptible function.
+// Tasklet is an interruptible function.
+//
+// Expectations:
+//  1. It returns when the context is cancelled. It doesn't
+//     have to do so immediately, but should at some point.
 type Tasklet func(context.Context) error
 
 func (f Tasklet) Run() error {
@@ -24,32 +28,40 @@ func (f Tasklet) Binds(bind func(Tasklet, Tasklet) Tasklet,
 	return x
 }
 
+var retErr Tasklet = func(ctx context.Context) error {
+	return ctx.Err()
+}
+
 func (f Tasklet) Seq(gs ...Tasklet) Tasklet {
-	return Tasklet.Binds(f, func(x, y Tasklet) Tasklet {
-		return func(ctx context.Context) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if err := x(ctx); err != nil {
-				return err
-			}
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			return y(ctx)
+	return func(ctx context.Context) error {
+		var err error
+		if err = ctx.Err(); err != nil {
+			return err
 		}
-	}, gs...)
+		if err = f(ctx); err != nil {
+			return err
+		}
+		for _, g := range gs {
+			if err = ctx.Err(); err != nil {
+				return err
+			}
+			if err = g(ctx); err != nil {
+				return err
+			}
+		}
+		return err
+	}
 }
 
 func (f Tasklet) Par(gs ...Tasklet) Tasklet {
-	return Tasklet.Binds(f, func(x, y Tasklet) Tasklet {
-		return func(ctx context.Context) error {
-			eg, taskCtx := errgroup.WithContext(ctx)
-			eg.Go(x.Ap(taskCtx))
-			eg.Go(y.Ap(taskCtx))
-			return eg.Wait()
+	return func(ctx context.Context) error {
+		eg, taskCtx := errgroup.WithContext(ctx)
+		eg.Go(f.Ap(taskCtx))
+		for _, g := range gs {
+			eg.Go(g.Ap(taskCtx))
 		}
-	}, gs...)
+		return eg.Wait()
+	}
 }
 
 func (f Tasklet) Ap(ctx context.Context) Closure {
@@ -76,19 +88,28 @@ func (f Tasklet) Until(p Predicate) Tasklet {
 	return Tasklet.cond(f, p, true)
 }
 
-func (f Tasklet) Mu(mu sync.Locker) Tasklet {
+func (f Tasklet) Ite(p Predicate, g, z Tasklet) Tasklet {
 	return func(ctx context.Context) error {
-		mu.Lock()
-		err := f(ctx)
-		mu.Unlock()
-		return err
+		if err := f(ctx); p(err) {
+			return g(ctx)
+		} else {
+			return z(ctx)
+		}
 	}
 }
 
-func (f Tasklet) Wg(wg *sync.WaitGroup) Tasklet {
-	wg.Add(1)
+func (f Tasklet) Mu(mu sync.Locker) Tasklet {
 	return func(ctx context.Context) error {
-		defer wg.Done()
-		return f(ctx)
+		return f.Ap(ctx).Mu(mu)()
+	}
+}
+
+func (f Tasklet) Once() Tasklet {
+	var once sync.Once
+	return func(ctx context.Context) error {
+		var err error
+		g := func() { err = f(ctx) }
+		once.Do(g)
+		return err
 	}
 }

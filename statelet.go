@@ -1,12 +1,37 @@
 package ftl
 
-import "sync"
+import (
+	"context"
+	"os"
+	"sync"
+	"time"
+
+	"golang.org/x/sync/errgroup"
+)
 
 // Statelet is a stateful function call.
 type Statelet func(state StateLoader) error
 
-func (f Statelet) Run() error {
-	return f(new(State))
+func (f Statelet) Run(ctx context.Context) {
+	Statelet.RunSigM(f, ctx, nil)
+}
+
+func (f Statelet) RunSigs(ctx context.Context) {
+	Statelet.RunSigM(f, ctx, Stdsigs)
+}
+
+func (f Statelet) RunSigM(
+	ctx context.Context,
+	sigm map[os.Signal]time.Duration,
+) {
+	_ = Routine.runSigM(
+		func(_ context.Context, state StateLoader) error {
+			return f(state)
+		},
+		ctx,
+		sigm,
+		true,
+	)
 }
 
 func (f Statelet) Binds(bind func(x, y Statelet) Statelet,
@@ -19,23 +44,29 @@ func (f Statelet) Binds(bind func(x, y Statelet) Statelet,
 }
 
 func (f Statelet) Seq(gs ...Statelet) Statelet {
-	return Statelet.Binds(f, func(x, y Statelet) Statelet {
-		return func(state StateLoader) error {
-			a := x.Ap(state)
-			b := y.Ap(state)
-			return Closure.Seq(a, b)()
+	return func(state StateLoader) error {
+		var err error
+		if err = f(state); err != nil {
+			return err
 		}
-	}, gs...)
+		for _, g := range gs {
+			if err = g(state); err != nil {
+				return err
+			}
+		}
+		return err
+	}
 }
 
 func (f Statelet) Par(gs ...Statelet) Statelet {
-	return Statelet.Binds(f, func(x, y Statelet) Statelet {
-		return func(state StateLoader) error {
-			a := x.Ap(state)
-			b := y.Ap(state)
-			return Closure.Par(a, b)()
+	return func(state StateLoader) error {
+		var eg errgroup.Group
+		eg.Go(f.Ap(state))
+		for _, g := range gs {
+			eg.Go(g.Ap(state))
 		}
-	}, gs...)
+		return eg.Wait()
+	}
 }
 
 func (f Statelet) Ap(state StateLoader) Closure {
@@ -62,19 +93,28 @@ func (f Statelet) Until(p Predicate) Statelet {
 	return Statelet.cond(f, p, true)
 }
 
-func (f Statelet) Mu(mu sync.Locker) Statelet {
+func (f Statelet) Ite(p Predicate, g, z Statelet) Statelet {
 	return func(state StateLoader) error {
-		mu.Lock()
-		err := f(state)
-		mu.Unlock()
-		return err
+		if err := f(state); p(err) {
+			return g(state)
+		} else {
+			return z(state)
+		}
 	}
 }
 
-func (f Statelet) Wg(wg *sync.WaitGroup) Statelet {
-	wg.Add(1)
+func (f Statelet) Mu(mu sync.Locker) Statelet {
 	return func(state StateLoader) error {
-		defer wg.Done()
-		return f(state)
+		return f.Ap(state).Mu(mu)()
+	}
+}
+
+func (f Statelet) Once() Statelet {
+	var once sync.Once
+	return func(state StateLoader) error {
+		var err error
+		g := func() { err = f(state) }
+		once.Do(g)
+		return err
 	}
 }

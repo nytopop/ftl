@@ -62,7 +62,7 @@ var _ StateHolder = new(State)
 // It's like a togglable sync.WaitGroup that also keeps
 // track of a parbound remote unload function.
 type State struct {
-	unloads Tasklet
+	unloads Tasklet // this is inefficient in the extreme. maybe just remove?
 	states  uint64
 	accept  bool
 	mu      sync.Mutex
@@ -109,8 +109,7 @@ func (s *State) Load() (loaded bool, unload func()) {
 }
 
 // LoadUnload loads a caller provided unloading tasklet, queuing
-// it to be executed on graceful shutdown. It will be retried on
-// every unload event, so it must be idempotent.
+// it to be executed on graceful shutdown.
 func (s *State) LoadUnload(unload Tasklet) (loaded bool) {
 	s.mu.Lock()
 
@@ -122,15 +121,12 @@ func (s *State) LoadUnload(unload Tasklet) (loaded bool) {
 		}
 
 		unload = Tasklet.Seq(
-			// first call the provided unload
-			unload,
-
-			// then unload our reference
 			func(_ context.Context) error {
 				s.unloadSingle()
 				return nil
 			},
-		)
+			unload,
+		).Once()
 
 		switch s.unloads {
 		case nil:
@@ -193,6 +189,7 @@ func (s *State) Wait(ctx context.Context) error {
 		errDone = errors.New("")
 
 		// succeedIfLoaded returns nil if still loaded, or
+		// errDone if everything is unloaded.
 		succeedIfLoaded Tasklet = func(_ context.Context) error {
 			if s.accept {
 				panic("wait called while accepting state loads")
@@ -204,19 +201,19 @@ func (s *State) Wait(ctx context.Context) error {
 		}
 
 		delayer Tasklet = func(_ context.Context) error {
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(5 * time.Millisecond)
 			return nil
 		}
+
+		//      |- tasklet gives us automatic context checking
+		//      v
+		loop Tasklet = Tasklet.Seq(
+			succeedIfLoaded.Mu(&s.mu), // check if loaded
+			delayer,                   // don't burn cpu
+		).While(Nil()) // repeat until something happens
 	)
 
-	//      |- tasklet gives us automatic context checking
-	//      v
-	var f = Tasklet.Seq(
-		succeedIfLoaded.Mu(&s.mu), // check if loaded
-		delayer,                   // don't burn cpu
-	).While(Nil()) // repeat until something happens
-
-	if err := f(ctx); err == errDone {
+	if err := loop(ctx); err == errDone {
 		return nil
 	} else {
 		return err

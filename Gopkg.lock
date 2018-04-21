@@ -2,10 +2,27 @@
 
 
 [[projects]]
+  branch = "master"
+  name = "github.com/cheekybits/genny"
+  packages = ["generic"]
+  revision = "9127e812e1e9e501ce899a18121d316ecb52e4ba"
+
+[[projects]]
   name = "github.com/davecgh/go-spew"
   packages = ["spew"]
   revision = "346938d642f2ec3594ed81d874461961cd0faa76"
   version = "v1.1.0"
+
+[[projects]]
+  name = "github.com/emirpasic/gods"
+  packages = [
+    "containers",
+    "trees",
+    "trees/redblacktree",
+    "utils"
+  ]
+  revision = "f6c17b524822278a87e3b3bd809fec33b51f5b46"
+  version = "v1.9.0"
 
 [[projects]]
   name = "github.com/pkg/errors"
@@ -40,6 +57,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "a9bbf2bf5cd1ef3f2c9eac3d4fe864ccb54ea1ebd77c4a72f7490dab34c1f8e7"
+  inputs-digest = "ffffff0fb887361919a461d9e4726a82288494b137976e04373854e332e0be0e"
   solver-name = "gps-cdcl"
   solver-version = 1

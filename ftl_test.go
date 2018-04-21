@@ -86,7 +86,7 @@ var routineSuite = suite{
 		// set debug so loads/unloads and current # of states are printed
 		// also, printing bottlenecks the whole thing at state.Load, unload
 		// which is a v. good thing for memory constraints :)
-		Debug = true
+		//Debug = true
 
 		// configure a ctx
 		ctx, cancel := context.WithTimeout(
