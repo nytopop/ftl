@@ -3,76 +3,61 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/nytopop/ftl"
+	"github.com/nytopop/ftl/ftm"
 )
 
 func main() {
-	fmt.Println("vim-go")
-
-	g := ftl.Transaction.Seq(
-		func(s ftl.STM) error {
-			s.Put(1)
+	g := ftm.TxInt.Seq(
+		func(s ftm.FTMInt) error {
+			*(s.Mut())++
 			return nil
 		},
-		func(s ftl.STM) error {
-			s.Put(2)
+		func(s ftm.FTMInt) error {
+			*(s.Mut())++
 			return nil
 		},
-		ftl.Transaction.Par(
-			func(s ftl.STM) error {
-				s.Put("hello")
-				s.Put("nvm")
-				s.Put("okay")
-
-				// that's an issue...
-				// Discard should give back orig
+		ftm.TxInt.Checkpoint(
+			func(s ftm.FTMInt) error {
+				*(s.Mut())++
 				return nil
 			},
-			func(s ftl.STM) error {
-				s.Put(4)
+			func(s ftm.FTMInt) error {
+				*(s.Mut())++
 				return nil
 			},
-			func(s ftl.STM) error {
-				s.Put(5)
-				return nil
-			},
-			func(s ftl.STM) error {
-				s.Put(6)
+			func(s ftm.FTMInt) error {
+				*(s.Mut())++
 				return nil
 			},
 		),
 	)
 
-	//f(&ftl.STM{})
-	stm := ftl.NewSTMv(64)
+	//f(&ftl.FTMInt{})
+	stm := ftm.NewFTMIntV(64)
 	//fmt.Println(stm.Atomic(f)())
 
 	f := stm.Atomic(g)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	// mhmmm you betcha
 	ftl.Closure.Par(
 		f, f, f, f, f, f,
-		stm.Atomic(func(s ftl.STM) error {
+		stm.Atomic(func(s ftm.FTMInt) error {
 			return nil
 		}),
 		f, f, f, f, f,
-		stm.Atomic(func(s ftl.STM) error {
-			s.Put(300303)
+		stm.Atomic(func(s ftm.FTMInt) error {
+			*(s.Mut()) = 300303
 			return nil
 		}),
 		f, f, f, f,
-		stm.Atomic(func(s ftl.STM) error {
-			s.Put(func() error { return nil })
-			return nil
-		}),
 		f, f, f, f,
-		stm.Atomic(func(s ftl.STM) error {
+		stm.Atomic(func(s ftm.FTMInt) error {
 			return errors.New("oboi")
 		}),
 	).Until(ftl.Done(ctx)).
