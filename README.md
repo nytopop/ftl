@@ -7,7 +7,20 @@ Inspired by [Control.Monad](https://hackage.haskell.org/package/base-4.11.0.0/do
 This library essentially provides a DSL for gluing together and modifying the runtime behavior of the typed functions:
 
 ```Go
-type Closure func() error
-type Tasklet func(context.Context) error
+// Predicate handles errors.
 type Predicate func(error) bool
+
+// Closure is a function that might fail.
+type Closure func() error
+
+// Tasklet is an interruptible Closure.
+type Tasklet func(context.Context) error
+
+// Statelet is a stateful Closure.
+type Statelet func(StateLoader) error
+
+// Routine is a stateful, interruptible Closure.
+type Routine func(context.Context, StateLoader) error
 ```
+
+Some subpackages utilizing the primitives in `ftl` are also provided.
